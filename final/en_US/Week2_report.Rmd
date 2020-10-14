@@ -1,0 +1,179 @@
+---
+title: "Data Science Capstone: Milestone Report"
+author: "Dongying"
+date: "10/7/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Instruction  
+
+The goal of this project is just to display that you've gotten used to working with the data and that you are on track to create your prediction algorithm. Please submit a report on R Pubs (http://rpubs.com/) that explains your exploratory analysis and your goals for the eventual app and algorithm. This document should be concise and explain only the major features of the data you have identified and briefly summarize your plans for creating the prediction algorithm and Shiny app in a way that would be understandable to a non-data scientist manager.   
+
+You should make use of tables and plots to illustrate important summaries of the data set. The motivation for this project is to:   
+        1. Demonstrate that you've downloaded the data and have successfully loaded it in.  
+        2. Create a basic report of summary statistics about the data sets.  
+        3. Report any interesting findings that you amassed so far.  
+        4. Get feedback on your plans for creating a prediction algorithm and Shiny app.  
+
+
+## Initial Data Processing
+
+In this session, we will download the data and do some initial processing to clean the data, make it ready for analysis. First, import the necessary packages:
+
+```{r packages}
+library(NLP)
+library(tm)
+library(stringi)
+library(wordcloud)
+library(ggplot2)
+library(dplyr)
+library(RWeka)
+library(textmineR)
+```
+
+#### Downloading and reading the data
+
+Download the ZIP file and then unzip it. Check if the files exist before processing.
+```{r downloading, cache = TRUE}
+filename <- "MySwiftKey.zip"
+fileURL <- "https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip"
+if (!file.exists(filename)){
+        download.file(fileURL, filename, method = "curl")
+}
+foldername <- "final"
+if (!file.exists(foldername)){
+        unzip(filename)
+}
+```
+
+Let first take the english language as a start, set directory to the en-US folder.
+```{r setworkingpath}
+setwd("/Users/dongyingwang/Documents/R-studio/DataScienceCapstone_project_MySwiftKey/final/en_US")
+```
+Read in 3 files into R, blogs, news and twitters:
+
+```{r readBlogs, cache = TRUE}
+fileName = "en_US.blogs.txt"
+con = file(fileName, open = "r")
+lineBlogs = readLines(con, encoding='UTF-8') 
+close(con)
+```
+```{r readNews, cache = TRUE}
+fileName = "en_US.news.txt"
+con = file(fileName, open = "r")
+lineNews = readLines(con, encoding='UTF-8') 
+close(con)
+```
+```{r readTwitters, cache = TRUE}
+fileName = "en_US.twitter.txt"
+con = file(fileName, open = "r")
+lineTwitters = readLines(con, encoding='UTF-8') 
+close(con)
+```
+
+#### Sampling and cleaning the text
+
+In this session, I'll only take twitter text as an example to show the pre-processing I did before analysis the data. First, sample 5% of the dataset: 
+
+```{r sampling, cache = TRUE}
+set.seed(404) # For reproducibility 
+percentage = 0.005
+sampleTwitters <- sample(lineTwitters, percentage*length(lineTwitters))
+length(sampleTwitters)
+head(sampleTwitters)
+```
+
+Then remove all weird characters and turn this data set into a corpus to do the text mining.
+```{r cleaning, cache = TRUE}
+sampleTwitters<- iconv(sampleTwitters, 'UTF-8', 'ASCII', "byte") ## Remove all weird characters
+sourceVec <- VectorSource(sampleTwitters) # turn character into source object
+corpVec <- VCorpus(sourceVec) # turn source object into corpus
+corpVec <- tm_map(corpVec, tolower) # covert to lower case
+corpVec <- tm_map(corpVec, removeWords, stopwords("english")) # remove 'a', 'an', etc.
+corpVec <- tm_map(corpVec, removePunctuation)
+corpVec <- tm_map(corpVec, removeNumbers)
+corpVec <- tm_map(corpVec, stripWhitespace)
+corpVec <- tm_map(corpVec, PlainTextDocument)
+```
+
+Another important step is to remove the offensive languages, I found the list from the website, https://www.cs.cmu.edu/~biglou/resources/.
+```{r remove_offensive, cache = TRUE}
+filename <- "offensive_words.txt"
+fileURL <- "https://www.cs.cmu.edu/~biglou/resources/bad-words.txt"
+if (!file.exists(filename)){
+        download.file(fileURL, filename, method = "curl")
+}
+offensive_words <- readLines(filename, encoding='UTF-8')
+offensive_words <- offensive_words[offensive_words != ""]
+corpVec <- tm_map(corpVec, removeWords, offensive_words)
+```
+
+Let's make a word cloud to see some most frequently used words in US twitters:
+```{r wordcloud, cache = TRUE}
+wordcloud(corpVec, max.words = 100, random.order = FALSE,
+          rot.per=0.35, use.r.layout=FALSE,colors=brewer.pal(8, "Dark2"))
+```
+
+## Exploratory data analysis
+Let's turn the corpus into a data frame and then look at the barplot of most frequently used words in US twitters, see if it's consistent with the word cloud my made previously.
+
+```{r frequentlyUsedWords, cache=TRUE, cache.lazy = FALSE}
+UnigramTokenizer <- function(x) NGramTokenizer(x, Weka_control(min = 1, max = 1))
+tdm_1 <- TermDocumentMatrix(corpVec, control = list(tokenize = UnigramTokenizer))
+term_matrix_1 <- as.matrix(tdm_1)   ## convert our term-document-matrix into a normal matrix
+freq_words <- rowSums(term_matrix_1)
+freq_words <- as.data.frame(sort(freq_words, decreasing=TRUE))
+freq_words$term <- rownames(freq_words)
+colnames(freq_words) <- c("Frequency","words")
+g <- ggplot(data = freq_words[1:20,], 
+            aes(x = reorder(words, Frequency), y = Frequency, fill = Frequency)) 
+g + geom_bar(stat="identity") + xlab('Words') + ylab("Frequency") + 
+        theme(axis.text.x = element_text(angle = 90, hjust = 1)) + coord_flip()
+```
+
+From above we can see the top 3 most frequently used words in US twitters are: **just**, **like**, **get**, **love** and **good**.
+
+```{r frequentlyUsed2WordsTerms, cache=TRUE, cache.lazy = FALSE} 
+BigramTokenizer <- function(x) NGramTokenizer(x, Weka_control(min = 2, max = 2))
+tdm_2 <- TermDocumentMatrix(corpVec, control = list(tokenize = BigramTokenizer))
+term_matrix_2 <- as.matrix(tdm_2)   ## convert our term-document-matrix into a normal matrix
+freq_2words <- rowSums(term_matrix_2)
+freq_2words <- as.data.frame(sort(freq_2words, decreasing=TRUE))
+freq_2words$term <- rownames(freq_2words)
+colnames(freq_2words) <- c("Frequency","term")
+g <- ggplot(data = freq_2words[1:20,], 
+            aes(x = reorder(term, Frequency), y = Frequency, fill = Frequency)) 
+g + geom_bar(stat="identity") + xlab('2-Words Terms') + ylab("Frequency") + 
+        theme(axis.text.x = element_text(angle = 90, hjust = 1)) + coord_flip()
+```
+
+From above we can see the top 3 most frequently used 2-words terms in US twitters are: **right now**, **last night**, **happy birthday**, **looking forward** and **just got**.
+
+```{r frequentlyUsed3WordsTerms, cache=TRUE, cache.lazy = FALSE}
+TrigramTokenizer <- function(x) NGramTokenizer(x, Weka_control(min = 3, max = 3))
+tdm_3 <- TermDocumentMatrix(corpVec, control = list(tokenize = TrigramTokenizer))
+term_matrix_3 <- as.matrix(tdm_3)   ## convert our term-document-matrix into a normal matrix
+freq_3words <- rowSums(term_matrix_3)
+freq_3words <- as.data.frame(sort(freq_3words, decreasing=TRUE))
+freq_3words$term <- rownames(freq_3words)
+colnames(freq_3words) <- c("Frequency","term")
+g <- ggplot(data = freq_3words[1:20,], 
+            aes(x = reorder(term, Frequency), y = Frequency, fill = Frequency)) 
+g + geom_bar(stat="identity") + xlab('3-Words Terms') + ylab("Frequency") + 
+        theme(axis.text.x = element_text(angle = 90, hjust = 1)) + coord_flip()
+```
+
+From above we can see the top 3 most frequently used 2-words terms in US twitters are: **like like like**, **happy mothers day**, **foul foul foul**, **let us know** and **cinco de mayo**.
+
+## Plan for the future steps 
+For now, we already display the n-gram analysis to the US twitter data set. I'm now facing the data set size too large problem. In the future, that would be a main thing to fix.   
+
+Also, for the other data in blogs and news, people have different expression habits. Further more, there might be more differences when switching to another language. The final model should include all those considerations.  
+
+Finally, after further analysis, text modeling, and text prediction, I'll implement model as a Shiny App.  
+
+
